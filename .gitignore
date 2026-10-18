@@ -1,0 +1,20 @@
+# --- Go ---
+# 编译产物；二进制放 bin/，不要输出成 ./biliaudio
+/bin/
+/dist/
+*.exe
+
+# 本地构建缓存（受限环境下 GOCACHE/GOMODCACHE 需要落在工作区内）
+/.gocache/
+/.gomodcache/
+/.tmp/
+bin/
+.venv/
+# --- 通用 ---
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.vscode/
+.idea/

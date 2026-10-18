@@ -1,0 +1,202 @@
+{{- define "page" -}}
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#00aeec" />
+    <title>哔哩哔哩音频解析</title>
+    <meta name="description" content="解析 B 站视频音频，在线试听并下载最高可用音质。" />
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    {{- if .Token }}
+    <meta name="biliaudio-token" content="{{ .Token }}" />{{ end }}
+    <link rel="stylesheet" href="/static/css/style.css?v={{ .AssetVersion }}" />
+  </head>
+  <body>
+    <main class="shell">
+      <form class="search-card" id="parse-form" method="post" action="/api/parse"{{ if .Token }} data-token="{{ .Token }}"{{ end }}>
+        <label class="sr-only" for="input">视频链接或 BV 号</label>
+        {{- /*
+          开闭标签之间不能有任何空白：textarea 的初始值包含标签间的全部字符，
+          写入换行会让输入框自带 "\n"，而服务端 TrimSpace 后判空，
+          于是粘贴链接点解析会报「请输入视频链接、BV 号或包含它们的文本」。
+          下方 {{ .Input }} 的前后空白也必须一起裁掉。
+        */ -}}
+        <textarea
+          id="input"
+          name="input"
+          rows="3"
+          spellcheck="false"
+          placeholder="粘贴 BV 号、av 号、b23.tv 短链或 B 站分享链接，支持一次多个"
+        >{{- .Input -}}</textarea>
+        <div class="search-foot">
+          <p class="hint">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              aria-hidden="true">
+              <circle cx="12" cy="12" r="9"></circle>
+              <path d="M12 8h.01M11 12h1v4h1"></path>
+            </svg>
+            支持分 P 与多条链接批量解析
+          </p>
+          <button class="btn-primary" type="submit" id="submit-btn">
+            <span class="btn-label">解析</span>
+          </button>
+        </div>
+      </form>
+
+      <div id="results" aria-live="polite">{{ template "results" . }}</div>
+    </main>
+
+    <footer class="site-footer">
+      <span>仅供个人学习与试听，请勿用于商业用途</span>
+      <span class="dot">·</span>
+      <a href="https://www.bilibili.com/" target="_blank" rel="noopener noreferrer">bilibili.com</a>
+    </footer>
+
+    <div id="player-bar" {{ if not .Tracks }} class="is-empty" {{ end }}>
+      <div class="player-inner">
+        <div class="player-meta">
+          <span class="player-title" id="player-title">未在播放</span>
+          <span class="player-artist" id="player-artist"></span>
+        </div>
+        <audio id="player" controls preload="none" playsinline></audio>
+      </div>
+    </div>
+
+    {{- /*
+      内联脚本（不依赖任何外部文件）：页面加载时清掉输入框里的残留内容。
+      曾经因为 textarea 标签间的换行成为初始值，导致粘贴的链接被挤到换行之后，
+      表现为「粘贴了链接却提示请输入视频链接」。这里做一次兜底清理，
+      即使浏览器还在用旧的静态资源缓存也不会再犯。
+    */}}
+    <script>
+      (function () {
+        var input = document.getElementById('input');
+        if (input && input.value.trim() === '') input.value = '';
+      })();
+    </script>
+    <script src="/static/js/player.js?v={{ .AssetVersion }}" defer></script>
+  </body>
+</html>
+{{- end -}} {{- define "results" -}} {{- if .Error -}}
+<p class="notice is-error" id="notice">
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    aria-hidden="true">
+    <circle cx="12" cy="12" r="9"></circle>
+    <path d="M12 8v5M12 16h.01"></path>
+  </svg>
+  {{ .Error }}
+</p>
+{{- else if not .Videos -}}
+<p class="notice" id="notice">
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    aria-hidden="true">
+    <path d="M4 7l8-4 8 4v10l-8 4-8-4z"></path>
+    <path d="M4 7l8 4 8-4M12 21v-10"></path>
+  </svg>
+  把 B 站链接粘到上面，点击解析即可获取音频
+</p>
+{{- end -}} {{- range $video := .Videos }}
+<article class="video-card">
+  <div class="video-head">
+    {{- if .Cover }}
+    <img
+      class="cover"
+      src="{{ .Cover }}"
+      alt=""
+      loading="lazy"
+      referrerpolicy="no-referrer"
+      onerror="this.classList.add('is-broken')" />
+    {{- else }}
+    <div class="cover is-broken" aria-hidden="true"></div>
+    {{- end }}
+    <div class="video-body">
+      <h2 class="video-title">{{ .Title }}</h2>
+      <p class="video-meta">
+        <span>{{ .Author }}</span>
+        {{- if .Pubdate }}<span class="sep">·</span><span>{{ .Pubdate }}</span>{{ end }}
+        <span class="sep">·</span><span>{{ .Duration }}</span>
+      </p>
+      <ul class="video-stats">
+        <li title="播放">{{ .Views }} 播放</li>
+        <li title="点赞">{{ .Likes }} 点赞</li>
+        <li title="投币">{{ .Coins }} 投币</li>
+        <li title="收藏">{{ .Favorites }} 收藏</li>
+        {{- if ne .Danmaku "0" }}
+        <li title="弹幕">{{ .Danmaku }} 弹幕</li>
+        {{ end }}
+      </ul>
+      {{- if .Description }}
+      <p class="video-desc">{{ .Description }}</p>
+      {{- end }}
+    </div>
+  </div>
+
+  <ul class="parts">
+    {{- range $index, $part := .Parts }}
+    <li
+      class="part"
+      data-track-name="{{ $part.TrackName }}"
+      data-artist="{{ $video.Author }}"
+      data-url="{{ $part.ProxyURL }}">
+      <div class="part-info">
+        <span class="part-index">{{ add $index 1 }}</span>
+        <span class="part-name">{{ $part.Name }}</span>
+        <span class="part-duration">{{ $part.Duration }}</span>
+      </div>
+      <div class="part-actions">
+        <button class="btn-ghost js-play" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M8 5.5v13l11-6.5z"></path>
+          </svg>
+          播放
+        </button>
+        <a
+          class="btn-ghost js-download"
+          href="{{ $part.ProxyURL }}"
+          download="{{ $part.Filename }}.m4a">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true">
+            <path d="M12 4v10M8 11l4 4 4-4M5 19h14"></path>
+          </svg>
+          下载
+        </a>
+      </div>
+    </li>
+    {{- end }}
+  </ul>
+</article>
+{{- end }} {{- if .Failures }}
+<ul class="failures">
+  {{- range .Failures }}
+  <li>{{ . }}</li>
+  {{ end }}
+</ul>
+{{- end }}
+
+<script type="application/json" id="audio-data">
+  {{ .TracksJSON }}
+</script>
+{{- end -}}

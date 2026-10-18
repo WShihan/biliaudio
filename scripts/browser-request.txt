@@ -1,0 +1,9 @@
+在你自己 Mac 的终端里执行（把令牌换成你的）：
+
+  TOKEN=ee739982314af1ae205dd3cc
+  curl -s -X POST -H 'X-Requested-With: fetch' \
+    --data-urlencode 'input=https://www.bilibili.com/video/BV1iF411j7oe' \
+    "http://127.0.0.1:8080/api/parse?token=$TOKEN" | head -c 300
+
+如果这几行能返回视频标题，就说明「服务端 + 这一条链接」完全正常，
+问题 100% 在浏览器发出的请求内容上。
