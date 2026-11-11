@@ -2,7 +2,7 @@
 // @name         Bilibili 视频音频下载
 // @name:zh-CN   B站视频音频下载
 // @namespace    https://github.com/WShihan/biliaudio
-// @version      1.2.2
+// @version      1.2.3
 // @description  在 B 站视频页一键下载当前分 P 的音频，自动识别视频与分 P，无需本地服务
 // @description:zh-CN  在 B 站视频页一键下载当前分 P 的音频，自动识别视频与分 P，无需本地服务
 // @author       WShihan
@@ -564,10 +564,10 @@
     button.title = DEFAULT_TITLE;
     // 图标来自需求提供的 SVG；改 fill 为 currentColor，让 hover/完成/失败状态能换色。
     button.innerHTML = [
-      '<svg class="biliaudio-icon" width="28" height="28" viewBox="0 0 1024 1024"',
+      '<svg class="biliaudio-icon" width="28" height="28" viewBox="0 0 100 100"',
       ' xmlns="http://www.w3.org/2000/svg" aria-hidden="true">',
-      '<path fill="currentColor" d="M512 64c-236.544 0-428.032 200.704-428.032 448V735.744c0 24.576 19.456 45.056 43.008 45.056s43.008-19.968 43.008-45.056v-224.256c0-198.144 153.088-358.4 342.016-358.4s342.016 160.256 342.016 358.4V735.744c0 24.576 19.456 45.056 43.008 45.056s43.008-19.968 43.008-45.056v-224.256c0-246.784-191.488-447.488-428.032-447.488z"/>',
-      '<path fill="currentColor" d="M332.8 602.112h-35.328c-19.456 0-35.328 19.456-35.328 44.544V914.944c0 24.576 15.872 45.056 35.328 45.056h35.328c19.456 0 35.84-19.968 35.84-45.056v-268.8c0-24.576-16.384-44.032-35.84-44.032zM725.504 602.112h-35.328c-19.456 0-35.328 19.456-35.328 44.544V914.944c0 24.576 15.872 45.056 35.328 45.056h35.328c19.456 0 35.84-19.968 35.84-45.056v-268.8c-0.512-24.576-16.384-44.032-35.84-44.032z"/>',
+      '<path fill="currentColor" fill-rule="evenodd" d="M14 36 Q14 31 19 31 H34 L64 13 Q70 9 70 17 V83 Q70 91 64 87 L34 69 H19 Q14 69 14 64 Z M42 35 Q42 32 45 32 H51 Q54 32 54 35 V49 H61 Q65 49 62 53 L50 65 Q48 67 46 65 L34 53 Q31 49 35 49 H42 Z"/>',
+      '<path d="M79 31 Q91 50 79 69" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"/>',
       '</svg>',
     ].join('');
 
