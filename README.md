@@ -1,11 +1,12 @@
 # biliaudio
 
-把 B 站视频的音频解析出来，支持两种用法：
+把 B 站视频的音频解析出来，支持三种用法：
 
 - **命令行**：`biliaudio BV1GJ411x7h7` —— 批量下载、断点续传
 - **网页版**：`biliaudio serve` —— 手机浏览器直接访问，在线试听与下载
+- **油猴脚本**：`userscript/biliaudio.user.js` —— 在 B 站视频页直接下载，无需本地服务
 
-两者共用同一套解析与代理逻辑，纯 Go 标准库实现，**零第三方依赖**。
+命令行和网页版共用同一套解析与代理逻辑，纯 Go 标准库实现，**零第三方依赖**。
 
 
 
@@ -175,6 +176,36 @@ sudo systemctl enable --now biliaudio
   地址、隐私模式下不会保存 Cookie，那样会出现「页面能看、一解析就 403」
 - **透明传输**：Range/Content-Range 原样透传，手机浏览器可正常拖动进度条
 
+## 油猴脚本（在 B 站页面直接下载）
+
+`userscript/biliaudio.user.js` 把下载入口直接放到 B 站视频页的播放窗口下方，
+不需要启动 `biliaudio serve`，也不需要手动复制视频链接。
+
+1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 或 Violentmonkey；
+2. 新建脚本，粘贴 `userscript/biliaudio.user.js` 的内容并保存
+   （也可以把文件拖进浏览器的扩展管理页）；
+3. 打开 `https://www.bilibili.com/video/BV...`，播放窗口下方的
+   `.video-toolbar-left` 工具栏里会出现「下载音频」按钮；
+4. 点击按钮，脚本会自动读取当前视频/分 P，选择最高码率的 DASH 音频轨并下载。
+
+实现要点：
+
+- 视频 ID 和 cid 优先从 URL、`window.__INITIAL_STATE__` 读取；缺失时回退到
+  `x/web-interface/view` 接口，因此从推荐位或列表页进入也能识别；
+- 接口请求优先走页面自身的 `fetch`（Origin / Referer / Cookie 与播放器一致，
+  不会因为扩展 Origin 触发 412），失败时再退回 `GM_xmlhttpRequest`；
+- 音频地址来自 `x/player/playurl`（`fnval=4048`，包含 DASH / Hi-Res / 杜比），
+  接口失败时回退到播放器已经拿到的 `window.__playinfo__`；
+- 自动挑选 `dash.audio` 中 `bandwidth` 最大的一档；没有 `dash.audio` 时回退到
+  杜比/无损音轨，并按 MIME 决定 `.m4a` / `.flac` 等扩展名；
+- 通过 `GM_xmlhttpRequest` 带 `Referer` 下载并显示进度，直链失败时自动尝试
+  `backupUrl`；
+- 按钮放在 `.video-toolbar-left-main`（`.video-toolbar-left` 内部），
+  B 站重新渲染工具栏后会自动补回；
+- 只匹配普通视频页 `/video/*` 和列表页 `/list/*`；番剧/课程等 PGC 页面使用
+  另一套接口，不在脚本支持范围内；
+- 高音质/会员音质取决于当前浏览器登录的 B 站账号权限。
+
 ## 目录结构
 
 ```
@@ -199,6 +230,8 @@ sudo systemctl enable --now biliaudio
 │   │   └── media.go
 │   ├── input/input.go          # 文本 → 视频 ID（含短链解析）
 │   └── download/download.go    # 断点续传、重试、进度回调
+├── userscript/
+│   └── biliaudio.user.js       # 油猴脚本：在 B 站视频页直接下载音频
 └── Makefile
 ```
 
