@@ -2,7 +2,7 @@
 // @name         Bilibili 视频音频下载
 // @name:zh-CN   B站视频音频下载
 // @namespace    https://github.com/WShihan/biliaudio
-// @version      1.0.0
+// @version      1.2.2
 // @description  在 B 站视频页一键下载当前分 P 的音频，自动识别视频与分 P，无需本地服务
 // @description:zh-CN  在 B 站视频页一键下载当前分 P 的音频，自动识别视频与分 P，无需本地服务
 // @author       WShihan
@@ -11,15 +11,7 @@
 // @supportURL   https://github.com/WShihan/biliaudio/issues
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/list/*
-// @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
-// @connect      api.bilibili.com
-// @connect      bilibili.com
-// @connect      bilivideo.com
-// @connect      bilivideo.cn
-// @connect      hdslb.com
-// @connect      akamaized.net
-// @connect      szbdyd.com
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==
@@ -27,26 +19,20 @@
 (function () {
   'use strict';
 
+  // 站点限定：只在 bilibili.com 及其子域运行。
+  // @match 已经限定了页面，这里再兜底一层，避免脚本被改到别的站点后误运行。
+  if (!/(^|\.)bilibili\.com$/i.test(location.hostname)) return;
+
   const BUTTON_ID = 'biliaudio-download';
   const STYLE_ID = 'biliaudio-style';
-  const TOAST_ID = 'biliaudio-toast';
   const WRAP_CLASS = 'biliaudio-item-wrap';
-  const DEFAULT_TEXT = '下载音频';
-  const DEFAULT_TITLE = '下载当前视频的音频（自动识别当前分 P）';
-  const API_REFERER = 'https://www.bilibili.com/';
-  const API_HEADERS = {
-    Accept: 'application/json, text/plain, */*',
-    Referer: API_REFERER,
-  };
-  const MEDIA_HEADERS = {
-    Accept: '*/*',
-    Referer: API_REFERER,
-  };
+  const DEFAULT_TITLE = '下载音频（自动识别当前分 P）';
   const PLAYURL_API = 'https://api.bilibili.com/x/player/playurl';
   const VIEW_API = 'https://api.bilibili.com/x/web-interface/view';
 
   // 当前按钮状态。工具栏被 B 站重新渲染后，新按钮会从这里恢复显示。
-  let status = { kind: 'idle', text: DEFAULT_TEXT, title: DEFAULT_TITLE, progress: 0 };
+  // 按钮只显示图标，因此所有状态都通过 title 提示和图标颜色/动画表达。
+  let status = { kind: 'idle', title: DEFAULT_TITLE };
   let lastHref = location.href;
 
   // ---------------------------------------------------------------- 小工具
@@ -263,31 +249,6 @@
 
   // ------------------------------------------------------------ B 站接口
 
-  function gmRequest(options) {
-    return new Promise((resolve, reject) => {
-      const request = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : null;
-      if (!request) {
-        reject(new Error('当前脚本管理器不支持 GM_xmlhttpRequest，请使用 Tampermonkey 或 Violentmonkey'));
-        return;
-      }
-      request(
-        Object.assign(
-          {
-            timeout: 30000,
-            anonymous: false,
-          },
-          options,
-          {
-            onload: resolve,
-            onerror: () => reject(new Error('网络请求失败')),
-            ontimeout: () => reject(new Error('网络请求超时')),
-            onabort: () => reject(new Error('网络请求已取消')),
-          }
-        )
-      );
-    });
-  }
-
   function buildApiUrl(endpoint, params) {
     const url = new URL(endpoint);
     if (params) {
@@ -311,8 +272,8 @@
   }
 
   /**
-   * 优先用页面自己的 fetch 请求接口：Origin/Referer/Cookie 都与播放器一致，
-   * 不会因为扩展的 Origin 被 B 站风控（HTTP 412）。
+   * 用页面自己的 fetch 请求接口：Origin/Referer/Cookie 都与播放器一致，
+   * 也不会触发脚本管理器的跨域授权弹窗。
    */
   async function apiGetViaPage(url) {
     const page = pageWindow();
@@ -323,7 +284,6 @@
       method: 'GET',
       credentials: 'include',
       headers: { Accept: 'application/json, text/plain, */*' },
-      cache: 'no-store',
     });
     if (!response || response.status < 200 || response.status >= 300) {
       throw new Error('B 站接口 HTTP ' + (response ? response.status : 'unknown'));
@@ -338,38 +298,8 @@
     return unwrapPayload(payload);
   }
 
-  async function apiGetViaGm(url) {
-    const response = await gmRequest({
-      method: 'GET',
-      url,
-      headers: API_HEADERS,
-      timeout: 20000,
-    });
-    if (response.status !== 200) {
-      throw new Error('B 站接口 HTTP ' + response.status);
-    }
-
-    let payload;
-    try {
-      payload = JSON.parse(response.responseText);
-    } catch (error) {
-      throw new Error('B 站接口返回了无法解析的数据');
-    }
-    return unwrapPayload(payload);
-  }
-
   async function apiGet(endpoint, params) {
-    const url = buildApiUrl(endpoint, params);
-    try {
-      return await apiGetViaPage(url);
-    } catch (pageError) {
-      // 页面 fetch 被 CSP/CORS 拦截时，退回脚本管理器的跨域请求
-      try {
-        return await apiGetViaGm(url);
-      } catch (gmError) {
-        throw pageError;
-      }
-    }
+    return apiGetViaPage(buildApiUrl(endpoint, params));
   }
 
   function fetchPlayData(context) {
@@ -499,54 +429,46 @@
 
   // ------------------------------------------------------------ 下载与保存
 
-  function fetchBlobOnce(url, onProgress, withHeaders) {
-    const details = {
+  /**
+   * 用页面自身的 fetch 下载音频，避免触发脚本管理器的跨域授权弹窗。
+   * B 站 CDN 的 CORS 是 `*`，所以这里要用 credentials: 'omit'；
+   * 带 cookie 的 `*` 会被浏览器判定为非法 CORS 响应。
+   */
+  async function fetchBlobViaPage(url, onProgress) {
+    const page = pageWindow();
+    const fetchFn = page && typeof page.fetch === 'function' ? page.fetch : null;
+    if (!fetchFn) throw new Error('页面 fetch 不可用');
+
+    const response = await fetchFn.call(page, url, {
       method: 'GET',
-      url,
-      responseType: 'blob',
-      timeout: 0,
-      anonymous: false,
-      onprogress: (event) => {
-        if (!event) return;
-        onProgress(Number(event.loaded) || 0, Number(event.total) || 0);
-      },
-    };
-    if (withHeaders) details.headers = MEDIA_HEADERS;
-
-    return gmRequest(details).then((response) => {
-      if (response.status < 200 || response.status >= 300) {
-        const error = new Error('音频下载失败：HTTP ' + response.status);
-        error.status = response.status;
-        throw error;
-      }
-      const body = response.response;
-      if (!body) throw new Error('音频下载失败：返回内容为空');
-      // 用结构化判断而不是 instanceof，避免脚本管理器与页面处于不同 realm
-      if (typeof body === 'object' && typeof body.size === 'number' && typeof body.slice === 'function') {
-        return body;
-      }
-      // 少数脚本管理器即使指定了 responseType: 'blob' 也可能返回 ArrayBuffer
-      if (typeof body === 'object' && typeof body.byteLength === 'number') {
-        return new Blob([body], { type: 'application/octet-stream' });
-      }
-      throw new Error('音频下载失败：返回内容不是二进制数据');
+      credentials: 'omit',
     });
-  }
-
-  async function fetchBlob(url, onProgress) {
-    try {
-      return await fetchBlobOnce(url, onProgress, true);
-    } catch (error) {
-      // 极少数环境下脚本管理器不允许改写 Referer，去掉它再试一次
-      if (error && (error.status === 401 || error.status === 403)) {
-        return fetchBlobOnce(url, onProgress, false);
-      }
+    if (!response || response.status < 200 || response.status >= 300) {
+      const error = new Error('音频下载失败：HTTP ' + (response ? response.status : 'unknown'));
+      error.status = response ? response.status : 0;
       throw error;
     }
-  }
 
-  function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    const total = Number(response.headers.get('content-length')) || 0;
+    const type = response.headers.get('content-type') || 'application/octet-stream';
+    if (!response.body || typeof response.body.getReader !== 'function') {
+      const blob = await response.blob();
+      onProgress(blob.size, blob.size);
+      return blob;
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    for (;;) {
+      const result = await reader.read();
+      if (result.done) break;
+      chunks.push(result.value);
+      loaded += result.value.byteLength;
+      onProgress(loaded, total);
+    }
+    onProgress(loaded, loaded || total);
+    return new Blob(chunks, { type });
   }
 
   async function downloadStream(stream, onProgress) {
@@ -554,13 +476,12 @@
     if (!urls.length) throw new Error('音频直链为空');
 
     let lastError = null;
-    for (let index = 0; index < urls.length; index += 1) {
+    for (const url of urls) {
       try {
-        return await fetchBlob(urls[index], onProgress);
+        return await fetchBlobViaPage(url, onProgress);
       } catch (error) {
         lastError = error;
         onProgress(0, 0);
-        if (index < urls.length - 1) await sleep(400);
       }
     }
     throw lastError || new Error('音频下载失败');
@@ -588,23 +509,18 @@
     style.id = STYLE_ID;
     style.textContent = [
       '.biliaudio-item-wrap{display:inline-flex;align-items:center;}',
-      '#biliaudio-download{position:relative;width:auto;min-width:92px;cursor:pointer;user-select:none;padding-bottom:2px;}',
-      '#biliaudio-download:hover{color:#00aeec;}',
-      '#biliaudio-download[data-state="resolving"],#biliaudio-download[data-state="downloading"]{cursor:progress;opacity:.8;}',
-      '#biliaudio-download .biliaudio-text{white-space:nowrap;}',
-      '#biliaudio-download .biliaudio-progress{position:absolute;left:0;right:0;bottom:0;height:2px;',
-      'background:rgba(0,174,236,.15);border-radius:1px;display:none;overflow:hidden;}',
-      '#biliaudio-download[data-state="resolving"] .biliaudio-progress,',
-      '#biliaudio-download[data-state="downloading"] .biliaudio-progress{display:block;}',
-      '#biliaudio-download .biliaudio-progress-bar{display:block;height:100%;width:0;background:#00aeec;',
-      'transition:width .2s ease;}',
-      '#biliaudio-toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%) translateY(8px);',
-      'z-index:2147483647;max-width:min(90vw,560px);padding:10px 16px;border-radius:8px;',
-      'background:rgba(20,20,20,.92);color:#fff;font-size:13px;line-height:1.5;text-align:center;',
-      'box-shadow:0 8px 30px rgba(0,0,0,.25);opacity:0;pointer-events:none;word-break:break-word;',
-      'transition:opacity .2s ease,transform .2s ease;}',
-      '#biliaudio-toast.biliaudio-toast-show{opacity:1;transform:translateX(-50%) translateY(0);}',
-      '#biliaudio-toast.biliaudio-toast-error{background:rgba(203,45,62,.95);}',
+      '#biliaudio-download{position:relative;width:32px;height:32px;min-width:0;padding:0;margin:0 12px;display:flex;',
+      'align-items:center;justify-content:center;border-radius:50%;cursor:pointer;user-select:none;',
+      'color:var(--text2,#61666d);transition:background-color .2s ease,color .2s ease,opacity .2s ease;}',
+      '#biliaudio-download:hover{color:#00aeec;background:rgba(0,174,236,.08);}',
+      '#biliaudio-download[data-state="resolving"],#biliaudio-download[data-state="downloading"]{',
+      'cursor:progress;animation:biliaudio-pulse 1s ease-in-out infinite;}',
+      '#biliaudio-download[data-state="done"]{color:#00aeec;}',
+      '#biliaudio-download[data-state="error"]{color:#f56c6c;}',
+      '#biliaudio-download .biliaudio-icon{display:block;width:28px;height:28px;pointer-events:none;}',
+      '@media(min-width:1681px){#biliaudio-download{width:40px;height:40px;}',
+      '#biliaudio-download .biliaudio-icon{width:36px;height:36px;}}',
+      '@keyframes biliaudio-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}',
     ].join('');
     (document.head || document.documentElement).appendChild(style);
   }
@@ -615,13 +531,15 @@
 
   function applyStatus(button) {
     if (!button) return;
-    const text = button.querySelector('.biliaudio-text');
-    if (text) text.textContent = status.text;
-    button.title = status.title;
-    button.dataset.state = status.kind;
-    button.setAttribute('aria-busy', status.kind === 'resolving' || status.kind === 'downloading' ? 'true' : 'false');
-    const bar = button.querySelector('.biliaudio-progress-bar');
-    if (bar) bar.style.width = Math.max(0, Math.min(100, status.progress)) + '%';
+    // 只在值变化时写 DOM，避免 MutationObserver 每 150ms 触发一次无意义的属性变更。
+    if (button.title !== status.title) button.title = status.title;
+    if (button.getAttribute('aria-label') !== status.title) {
+      button.setAttribute('aria-label', status.title);
+    }
+    if (button.dataset.state !== status.kind) button.dataset.state = status.kind;
+    const busy =
+      status.kind === 'resolving' || status.kind === 'downloading' ? 'true' : 'false';
+    if (button.getAttribute('aria-busy') !== busy) button.setAttribute('aria-busy', busy);
   }
 
   function setStatus(patch) {
@@ -630,29 +548,8 @@
   }
 
   function resetStatus() {
-    status = { kind: 'idle', text: DEFAULT_TEXT, title: DEFAULT_TITLE, progress: 0 };
+    status = { kind: 'idle', title: DEFAULT_TITLE };
     applyStatus(getButton());
-  }
-
-  let toastTimer = 0;
-
-  function showToast(message, isError) {
-    let toast = document.getElementById(TOAST_ID);
-    if (!toast) {
-      toast = document.createElement('div');
-      toast.id = TOAST_ID;
-      toast.setAttribute('role', 'status');
-      toast.setAttribute('aria-live', 'polite');
-      (document.body || document.documentElement).appendChild(toast);
-    }
-    toast.textContent = message;
-    toast.classList.toggle('biliaudio-toast-error', Boolean(isError));
-    toast.classList.add('biliaudio-toast-show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(
-      () => toast.classList.remove('biliaudio-toast-show'),
-      isError ? 6000 : 3000
-    );
   }
 
   function createButton() {
@@ -665,14 +562,13 @@
     button.setAttribute('role', 'button');
     button.setAttribute('tabindex', '0');
     button.title = DEFAULT_TITLE;
+    // 图标来自需求提供的 SVG；改 fill 为 currentColor，让 hover/完成/失败状态能换色。
     button.innerHTML = [
-      '<svg class="video-toolbar-item-icon" width="28" height="28" viewBox="0 0 28 28"',
+      '<svg class="biliaudio-icon" width="28" height="28" viewBox="0 0 1024 1024"',
       ' xmlns="http://www.w3.org/2000/svg" aria-hidden="true">',
-      '<path fill-rule="evenodd" clip-rule="evenodd" fill="currentColor"',
-      ' d="M14 3.5a1.25 1.25 0 0 1 1.25 1.25v11.19l3.72-3.72a1.25 1.25 0 1 1 1.77 1.77l-5.86 5.86a1.25 1.25 0 0 1-1.77 0l-5.86-5.86a1.25 1.25 0 1 1 1.77-1.77l3.73 3.72V4.75A1.25 1.25 0 0 1 14 3.5Zm-8.75 18.25a1.25 1.25 0 0 0 0 2.5h17.5a1.25 1.25 0 0 0 0-2.5H5.25Z"/>',
+      '<path fill="currentColor" d="M512 64c-236.544 0-428.032 200.704-428.032 448V735.744c0 24.576 19.456 45.056 43.008 45.056s43.008-19.968 43.008-45.056v-224.256c0-198.144 153.088-358.4 342.016-358.4s342.016 160.256 342.016 358.4V735.744c0 24.576 19.456 45.056 43.008 45.056s43.008-19.968 43.008-45.056v-224.256c0-246.784-191.488-447.488-428.032-447.488z"/>',
+      '<path fill="currentColor" d="M332.8 602.112h-35.328c-19.456 0-35.328 19.456-35.328 44.544V914.944c0 24.576 15.872 45.056 35.328 45.056h35.328c19.456 0 35.84-19.968 35.84-45.056v-268.8c0-24.576-16.384-44.032-35.84-44.032zM725.504 602.112h-35.328c-19.456 0-35.328 19.456-35.328 44.544V914.944c0 24.576 15.872 45.056 35.328 45.056h35.328c19.456 0 35.84-19.968 35.84-45.056v-268.8c-0.512-24.576-16.384-44.032-35.84-44.032z"/>',
       '</svg>',
-      '<span class="video-toolbar-item-text biliaudio-text">' + DEFAULT_TEXT + '</span>',
-      '<span class="biliaudio-progress" aria-hidden="true"><span class="biliaudio-progress-bar"></span></span>',
     ].join('');
 
     button.addEventListener('click', handleClick);
@@ -703,10 +599,7 @@
     if (!container) return false;
 
     const existing = getButton();
-    if (existing && container.contains(existing)) {
-      applyStatus(existing);
-      return true;
-    }
+    if (existing && container.contains(existing)) return true;
     if (existing) {
       const oldWrap = existing.closest('.' + WRAP_CLASS);
       (oldWrap || existing).remove();
@@ -733,7 +626,7 @@
     event.stopPropagation();
     if (status.kind === 'resolving' || status.kind === 'downloading') return;
 
-    setStatus({ kind: 'resolving', text: '解析中…', title: '正在获取音频地址…', progress: 0 });
+    setStatus({ kind: 'resolving', title: '解析中…' });
     try {
       const context = await resolveContext();
       const data = await loadPlayData(context);
@@ -743,34 +636,23 @@
       }
 
       const filename = buildFilename(context, stream);
-      setStatus({
-        kind: 'downloading',
-        text: '下载中 0%',
-        title: '正在下载：' + filename,
-        progress: 0,
-      });
+      setStatus({ kind: 'downloading', title: '下载中 0%：' + filename });
 
       const blob = await downloadStream(stream, (loaded, total) => {
         const percent = total > 0 ? Math.min(99, Math.floor((loaded / total) * 100)) : 0;
-        const text = total > 0 ? '下载中 ' + percent + '%' : '下载中 ' + formatBytes(loaded);
-        const title =
-          total > 0
-            ? '已下载 ' + formatBytes(loaded) + ' / ' + formatBytes(total)
-            : '已下载 ' + formatBytes(loaded);
-        setStatus({ kind: 'downloading', text, title, progress: percent });
+        const progress = total > 0 ? percent + '%' : formatBytes(loaded);
+        setStatus({ kind: 'downloading', title: '下载中 ' + progress + '：' + filename });
       });
 
       saveBlob(blob, filename);
-      setStatus({ kind: 'done', text: '已保存', title: '已保存：' + filename, progress: 100 });
-      showToast('音频已开始下载：' + filename, false);
+      setStatus({ kind: 'done', title: '已保存：' + filename });
       setTimeout(() => {
         if (status.kind === 'done') resetStatus();
       }, 3000);
     } catch (error) {
       const message = formatError(error);
       console.error('[biliaudio]', error);
-      setStatus({ kind: 'error', text: '下载失败', title: message, progress: 0 });
-      showToast(message, true);
+      setStatus({ kind: 'error', title: message });
       setTimeout(() => {
         if (status.kind === 'error') resetStatus();
       }, 6000);
@@ -786,7 +668,22 @@
     scheduleInject();
   }
 
-  function init() {
+  function isPageReady() {
+    // 三个信号同时满足才认为客户端已完成挂载：
+    // 1) B 站根组件已经挂上 Vue 实例；
+    // 2) 顶栏已经从服务端骨架变成有高度的渲染结果；
+    // 3) 播放器 DOM 已经由骨架替换成完整播放器。
+    // 只看“顶栏有高度”不够：服务端 HTML 在 hydration 前也可能有高度。
+    const app = document.querySelector('#app');
+    if (!app || !app.__vue__) return false;
+    const header = document.querySelector('.bili-header, #biliMainHeader');
+    if (!header || header.getBoundingClientRect().height <= 0) return false;
+    const player = document.querySelector('#bilibili-player');
+    if (!player || player.innerHTML.length < 50000) return false;
+    return true;
+  }
+
+  function startWatching() {
     ensureStyle();
     injectButton();
 
@@ -799,6 +696,37 @@
       handleUrlChange();
       if (!getButton()) injectButton();
     }, 1000);
+  }
+
+  function init() {
+    let started = false;
+    const start = () => {
+      if (started) return;
+      started = true;
+      startWatching();
+    };
+
+    // 关键：不能在 B 站 Vue 挂载/注水完成前往工具栏里插节点，
+    // 否则会破坏 hydration，导致顶栏等组件被卸载。
+    if (isPageReady()) {
+      setTimeout(start, 500);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if (isPageReady()) {
+        clearInterval(timer);
+        setTimeout(start, 500);
+        return;
+      }
+      // 兜底：页面结构变化导致识别不到信号时，等 8 秒再插入；
+      // 此时 Vue 通常已经完成挂载。
+      if (Date.now() - startedAt > 8000) {
+        clearInterval(timer);
+        start();
+      }
+    }, 100);
   }
 
   if (document.readyState === 'loading') {

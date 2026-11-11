@@ -185,25 +185,35 @@ sudo systemctl enable --now biliaudio
 2. 新建脚本，粘贴 `userscript/biliaudio.user.js` 的内容并保存
    （也可以把文件拖进浏览器的扩展管理页）；
 3. 打开 `https://www.bilibili.com/video/BV...`，播放窗口下方的
-   `.video-toolbar-left` 工具栏里会出现「下载音频」按钮；
-4. 点击按钮，脚本会自动读取当前视频/分 P，选择最高码率的 DASH 音频轨并下载。
+   `.video-toolbar-left` 工具栏里会出现一个下载图标按钮；悬停会显示
+   「下载音频」提示；
+4. 点击图标，脚本会自动读取当前视频/分 P，选择最高码率的 DASH 音频轨并下载。
 
 实现要点：
 
 - 视频 ID 和 cid 优先从 URL、`window.__INITIAL_STATE__` 读取；缺失时回退到
   `x/web-interface/view` 接口，因此从推荐位或列表页进入也能识别；
-- 接口请求优先走页面自身的 `fetch`（Origin / Referer / Cookie 与播放器一致，
-  不会因为扩展 Origin 触发 412），失败时再退回 `GM_xmlhttpRequest`；
+- 接口请求走页面自身的 `fetch`（Origin / Referer / Cookie 与播放器一致，
+  不会因为扩展 Origin 触发 412）；
 - 音频地址来自 `x/player/playurl`（`fnval=4048`，包含 DASH / Hi-Res / 杜比），
   接口失败时回退到播放器已经拿到的 `window.__playinfo__`；
 - 自动挑选 `dash.audio` 中 `bandwidth` 最大的一档；没有 `dash.audio` 时回退到
   杜比/无损音轨，并按 MIME 决定 `.m4a` / `.flac` 等扩展名；
-- 通过 `GM_xmlhttpRequest` 带 `Referer` 下载并显示进度，直链失败时自动尝试
-  `backupUrl`；
+- 音频也通过页面自身的 `fetch` 流式下载（`credentials: 'omit'`，B 站 CDN
+  的 CORS 为 `*`）；进度、成功、失败都会更新到按钮的 `title` 提示
+  （图标同时脉冲/变色），直链失败时自动尝试 `backupUrl`；
 - 按钮放在 `.video-toolbar-left-main`（`.video-toolbar-left` 内部），
   B 站重新渲染工具栏后会自动补回；
-- 只匹配普通视频页 `/video/*` 和列表页 `/list/*`；番剧/课程等 PGC 页面使用
-  另一套接口，不在脚本支持范围内；
+- 不会在 B 站 Vue 完成挂载/注水前往工具栏里插节点：脚本会先等根组件、
+  顶栏和播放器 DOM 都就绪（并额外等待 500ms），避免破坏 hydration 导致
+  顶栏等组件被卸载；
+- 按钮只显示图标、不占文字宽度；下载/成功/失败状态通过 `title` 提示和
+  图标颜色、脉冲动画表达，不额外插入文字；
+- **站点仅限 B 站**：`@match` 只匹配 `www.bilibili.com` 的 `/video/*` 和
+  `/list/*`，脚本内还会校验 `location.hostname` 必须是 `bilibili.com` 或其子域；
+- 不申请 `GM_xmlhttpRequest` / `@connect` 跨域权限，所有网络请求都由当前
+  B 站页面自身的 `fetch` 发出，因此**不会弹出跨域授权确认**；
+- 番剧/课程等 PGC 页面使用另一套接口，不在脚本支持范围内；
 - 高音质/会员音质取决于当前浏览器登录的 B 站账号权限。
 
 ## 目录结构
